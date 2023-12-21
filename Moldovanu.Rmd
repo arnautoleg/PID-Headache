@@ -1,0 +1,257 @@
+---
+title: "Moldovanu"
+author: "Oleg Arnaut"
+date: "2023-12-21"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, error = FALSE, message = TRUE)
+
+knitr::opts_chunk$set(dpi=300) 
+knitr::opts_chunk$set(fig.width=7, fig.height=5) 
+
+library(tidyverse)
+library(forcats)
+library(readxl)
+library(openxlsx)
+library(flextable)
+library(dplyr)
+library(gtsummary)
+library(smd)
+
+
+library(ggstatsplot)
+
+# Define a function for grouped boxplots with nonparametric statistics
+create_grouped_boxplot <- function(data, x_var, y_var, x_name, y_name) {
+  # Create grouped boxplot using ggbetweenstats
+  plt <- ggbetweenstats(
+    data = data,
+    x = {{ x_var }},
+    y = {{ y_var }},
+    type = "nonparametric"
+  )
+
+  # Customize labels and themes
+  plt <- plt + 
+    labs(
+      x = x_name,
+      y = y_name,
+      #title = paste("Distribution of", quo_name(y_var), "by", quo_name(x_var))
+    ) + 
+    theme(
+      text = element_text(family = "sans", size = 8, color = "black"),
+      plot.title = element_text(
+        family = "sans", 
+        size = 12,
+        face = "bold",
+        color = "#2a475e"
+      ),
+      plot.subtitle = element_text(
+        family = "sans", 
+        size = 12, 
+        face = "bold",
+        color = "#1b2838"
+      ),
+      plot.title.position = "plot",
+      axis.text = element_text(size = 10, color = "black"),
+      axis.title = element_text(size = 12)
+    )
+  
+  # Further customize themes
+  plt <- plt  +
+    # Uncomment and adjust if you want specific y-axis limits
+    # ylim(0, max(data$y_var) + 5)+
+    theme(
+      axis.ticks = element_blank(),
+      axis.line = element_line(colour = "grey50"),
+      panel.grid = element_line(color = "#b4aea9"),
+      panel.grid.minor = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.major.y = element_line(linetype = "dashed"),
+      panel.background = element_rect(fill = "#fbf9f4", color = "#fbf9f4"),
+      plot.background = element_rect(fill = "#fbf9f4", color = "#fbf9f4")
+    )
+  
+  # Return the created plot
+  return(plt)
+}
+
+```
+
+
+
+
+```{r}
+
+df <- read_excel("Moldovanu.xlsx")
+
+df %>% select(!c("...1")) -> df 
+
+
+df$Sex <- as.factor(df$Sex)
+levels(df$Sex) <- c("b", "f")
+summary(df$Sex)
+
+df$Headache <- as.factor(df$Headache)
+levels(df$Headache) <- c("<=7", ">7")
+summary(df$Headache)
+
+
+numeric_variables <- names(df)[sapply(df, is.numeric)]
+factor_variables <- names(df)[sapply(df, is.factor)]
+
+names(df)
+
+
+```
+
+
+# Characteristica generala
+
+```{r}
+
+df %>% tbl_summary(
+            type = list("PID_Antisocial" = "continuous",
+                          "PID_Avoidant" = "continuous",
+                          "PID_Borderline_1" = "continuous",
+                          "PID_Borderline_2" = "continuous",
+                          "PID_Narcis" = "continuous",
+                          "PID_obses" = "continuous",
+                          "PID_Schy" = "continuous",        
+                          "PID_Hys_1" = "continuous",
+                          "PID_HYs_2" = "continuous"),
+              statistic = list(all_categorical() ~ "{n} ({p}%)",
+                               all_continuous() ~ "{mean} ({sd})\n {median} ({IQR})\n {min} {max} "),
+              digits = list(all_categorical() ~ c(0, 1),
+                            all_continuous()  ~ c(1, 1))) %>%
+  modify_header(label = "**Variable**") %>%
+  modify_caption("Participant characteristics") %>%
+  bold_labels()%>%add_ci
+
+
+
+```
+
+# Evaluarea comparativa intre loturile
+
+
+```{r}
+
+set.seed(123)
+
+df %>%
+  tbl_summary(
+    by = "Headache",
+    type = list("PID_Antisocial" = "continuous",
+                          "PID_Avoidant" = "continuous",
+                          "PID_Borderline_1" = "continuous",
+                          "PID_Borderline_2" = "continuous",
+                          "PID_Narcis" = "continuous",
+                          "PID_obses" = "continuous",
+                          "PID_Schy" = "continuous",        
+                          "PID_Hys_1" = "continuous",
+                          "PID_HYs_2" = "continuous"),
+    statistic = list(
+      all_categorical() ~ "{n} ({p}%)",
+      all_continuous() ~ "{mean} ({sd})\n {median} ({IQR})\n {min} {max} "
+    ),
+    digits = list(
+      all_categorical() ~ c(0, 1),
+      all_continuous() ~ c(1, 1)
+    )
+  ) %>%
+  modify_header(label = "**Variable**") %>%
+  modify_caption("Participant characteristics") %>%
+  bold_labels() %>%
+  add_ci() %>%
+  add_p(
+    all_categorical() ~ chisq.test,
+    test.args = all_categorical() ~ list(simulate.p.value = FALSE, B = 100000)) %>% # Chi squared test estimate by Monte Carlo simulation (10000 samples)
+  add_q(method = "hochberg") %>%
+  bold_p()%>%
+  add_n() 
+
+
+```
+
+
+# Vizualizarea datelor categoriale
+
+```{r}
+
+library(vcd)
+
+for (i in factor_variables) {
+  if (i != "Headache") {
+    # Perform chi-squared test with simulation-based p-value
+    chi_result <- chisq.test(table(df$Headache, df[[i]]), simulate.p.value = TRUE, B  = 100000)
+    
+    # Calculate V Cramer's statistic
+    assoc_stats <- assocstats(table(df$Headache, df[[i]]))
+    v_cramer <- assoc_stats$cramer
+    
+    # Print the chi-squared test results and V Cramer's statistic
+    print(paste("Chi-Squared Test for", i))
+    print(chi_result)
+    print(paste("V Cramer's statistic:", v_cramer))
+    
+    # Create a bar plot using ggplot2
+    p <- ggplot(df, aes(x = Headache, fill = .data[[i]])) +
+      geom_bar(position = "fill") +
+      labs(title = paste("Bar Plot for", i),
+           subtitle = paste("Chi-Squared Test (Monte Carlo):", 
+                             "=", round(chi_result$statistic, 2),
+                             "\np-value =", format(chi_result$p.value, digits = 4),
+                             "\nV Cramer's statistic =", format(v_cramer, digits = 4)),
+           x = "Headache",
+           y = "Proportion") +
+      theme_minimal()
+    
+    # Print the plot
+    print(p)
+  }
+}
+
+
+```
+
+
+
+# Vizualizarea datelor numerice
+
+
+
+```{r fig.width=8, fig.height=6, dpi=300}
+
+library(rlang)
+library(purrr)
+
+
+# variables <- c("talia_cm", "talia_percentile", "talia_DS", "greutate_kg", "greutate_percentile", "greutate_DS", "surplus", "IMC", "IMC_percentile", "IMC_Zscore")
+# names <- c("Talia, cm", "Talia, percentile", "Talia, DS", "Greutate, kg", "Greutate, percentile", "Greutate, DS", "surplus", "IMC", "IMC, percentile", "IMC, Zscore")
+
+
+
+numerical_data <- names(df %>% select_if(is.numeric))
+
+for (i in seq_along(numerical_data)) {
+  element1 <- numerical_data[[i]]
+  element2 <- numerical_data[[i]]
+  
+  plot <- create_grouped_boxplot(df, "Headache", !!ensym(element1), "Headache", element2)
+  print(plot)
+}
+
+
+```
+
+
+
+
+
+
